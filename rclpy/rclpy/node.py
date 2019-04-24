@@ -363,12 +363,15 @@ class Node:
         check_for_type_support(msg_type)
         failed = False
         try:
-            publisher_handle = _rclpy.rclpy_create_publisher(
+            publisher_capsule = _rclpy.rclpy_create_publisher(
                 self.handle, msg_type, topic, qos_profile.get_c_qos_profile())
         except ValueError:
             failed = True
         if failed:
             self._validate_topic_or_service_name(topic)
+
+        publisher_handle = Handle(publisher_capsule)
+
         publisher = Publisher(publisher_handle, msg_type, topic, qos_profile, self.handle)
         self.publishers.append(publisher)
         return publisher
@@ -544,11 +547,10 @@ class Node:
 
         :return: ``True`` if successful, ``False`` otherwise.
         """
-        for pub in self.publishers:
-            if pub.publisher_handle == publisher.publisher_handle:
-                _rclpy.rclpy_destroy_node_entity(pub.publisher_handle, self.handle)
-                self.publishers.remove(pub)
-                return True
+        if publisher in self.publishers:
+            self.publishers.remove(publisher)
+            publisher.destroy()
+            return True
         return False
 
     def destroy_subscription(self, subscription: Subscription) -> bool:
@@ -642,7 +644,7 @@ class Node:
 
         while self.publishers:
             pub = self.publishers.pop()
-            _rclpy.rclpy_destroy_node_entity(pub.publisher_handle, self.handle)
+            pub.destroy()
         while self.subscriptions:
             sub = self.subscriptions.pop()
             sub.destroy()

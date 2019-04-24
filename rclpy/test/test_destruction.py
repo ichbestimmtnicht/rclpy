@@ -229,3 +229,32 @@ def test_destroy_subscription_asap():
             node.destroy_node()
     finally:
         rclpy.shutdown(context=context)
+
+
+def test_destroy_publisher_asap():
+    context = rclpy.context.Context()
+    rclpy.init(context=context)
+
+    try:
+        node = rclpy.create_node('test_destroy_publisher_asap', context=context)
+        try:
+            pub = node.create_publisher(Primitives, 'pub_topic')
+
+            # handle valid
+            with pub.handle:
+                pass
+
+            with pub.handle:
+                node.destroy_publisher(pub)
+                # handle valid because it's still being used
+                with pub.handle:
+                    pass
+
+            with pytest.raises(InvalidHandle):
+                # handle invalid because it was destroyed when no one was using it
+                with pub.handle:
+                    pass
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown(context=context)
