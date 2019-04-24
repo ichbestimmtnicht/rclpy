@@ -84,7 +84,7 @@ class ServerWaitable(Waitable):
         super().__init__(ReentrantCallbackGroup())
 
         self.server = _rclpy.rclpy_create_service(
-            node.handle, EmptySrv, 'test_server', qos_profile_default.get_c_qos_profile())[0]
+            node.handle, EmptySrv, 'test_server', qos_profile_default.get_c_qos_profile())
         self.server_index = None
         self.server_is_ready = False
 
