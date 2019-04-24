@@ -42,7 +42,7 @@ class ClientWaitable(Waitable):
         super().__init__(ReentrantCallbackGroup())
 
         self.client = _rclpy.rclpy_create_client(
-            node.handle, EmptySrv, 'test_client', qos_profile_default.get_c_qos_profile())[0]
+            node.handle, EmptySrv, 'test_client', qos_profile_default.get_c_qos_profile())
         self.client_index = None
         self.client_is_ready = False
 
