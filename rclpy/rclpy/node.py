@@ -20,6 +20,7 @@ from typing import TypeVar
 
 import weakref
 
+# TODO(jubeira): check for missing imports.
 from rcl_interfaces.msg import ParameterEvent
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.callback_groups import CallbackGroup
@@ -29,7 +30,7 @@ from rclpy.clock import Clock
 from rclpy.clock import ROSClock
 from rclpy.constants import S_TO_NS
 from rclpy.context import Context
-from rclpy.exceptions import NotInitializedException
+from rclpy.exceptions import NotInitializedException, ParameterNotDeclaredException
 from rclpy.executors import Executor
 from rclpy.expand_topic_name import expand_topic_name
 from rclpy.guard_condition import GuardCondition
@@ -52,6 +53,7 @@ from rclpy.utilities import get_default_context
 from rclpy.validate_full_topic_name import validate_full_topic_name
 from rclpy.validate_namespace import validate_namespace
 from rclpy.validate_node_name import validate_node_name
+from rclpy.validate_parameter_name import validate_parameter_name
 from rclpy.validate_topic_name import validate_topic_name
 from rclpy.waitable import Waitable
 
@@ -81,7 +83,8 @@ class Node:
         namespace: str = None,
         use_global_arguments: bool = True,
         start_parameter_services: bool = True,
-        initial_parameters: List[Parameter] = None
+        initial_parameters: List[Parameter] = None,
+        allow_undeclared_parameters = False
     ) -> None:
         """
         Constructor.
@@ -97,6 +100,8 @@ class Node:
         :param start_parameter_services: ``False`` if the node should not create parameter
             services.
         :param initial_parameters: A list of parameters to be set during node creation.
+        :param allow_undeclared_parameters: True if undeclared parameters are allowed.
+            This flag affects the behavior of parameter-related operations.
         """
         self._handle = None
         self._context = get_default_context() if context is None else context
@@ -110,6 +115,7 @@ class Node:
         self.waitables: List[Waitable] = []
         self._default_callback_group = MutuallyExclusiveCallbackGroup()
         self._parameters_callback = None
+        self._allow_undeclared_parameters = allow_undeclared_parameters
 
         namespace = namespace or ''
         if not self._context.ok():
@@ -145,6 +151,8 @@ class Node:
         # use the set_parameters_atomically API so a parameter event is published.
         if initial_parameters is not None:
             node_parameters.update({p.name: p for p in initial_parameters})
+
+        self.declare_parameters('/', node_parameters.values())
         self.set_parameters_atomically(node_parameters.values())
 
         if start_parameter_services:
@@ -217,6 +225,67 @@ class Node:
         """Get the nodes logger."""
         return self._logger
 
+    def declare_parameter(self, parameter: Parameter) -> Parameter:
+        """
+        Declare and initialize a parameter.
+
+        This method, if successful, will result in any callback registered with
+        set_parameters_callback to be called.
+
+        :param parameter: The parameter to declare, with a name, value and descriptor.
+        :return: Parameter with the effectively assigned value.
+        :raises: ParameterAlreadyDeclaredException if the parameter had already been declared.
+        :raises: InvalidParameterException if the parameter name is invalid.
+        :raises: InvalidParameterValueException if the registered callback rejects the parameter.
+        """
+        return self.declare_parameters('/', [parameter])
+
+    def declare_parameters(self, namespace: str, parameters: List[Parameter]) -> List[Parameter]:
+        """
+        Declares a list of parameters.
+
+        This method, if successful, will result in any callback registered with
+        set_parameters_callback to be called once for each parameter.
+        If one of those calls fail, an exception will be raised and the remaining
+        parameters will not be set. Parameters declared up to that point will not be undeclared.
+
+        :param namespace: Namespace for parameters.
+        :param parameters: The parameters to declare, with a name, value and descriptor.
+        :return: Parameter list with the effectively assigned values for each of them.
+        :raises: ParameterAlreadyDeclaredException if the parameter had already been declared.
+        :raises: InvalidParameterException if the parameter name is invalid.
+        :raises: InvalidParameterValueException if the registered callback rejects the parameter.
+        """
+        for parameter in parameters:
+            parameter.name = namespace + parameter.name
+            # Note(jubeira): declare_parameters verifies the name, but set_parameters doesn't.
+            validate_parameter_name(parameter.name)
+
+        if any([parameter.name in self._parameters for parameter in parameters]):
+            raise ParameterAlreadyDeclaredException()
+
+        # Call the callback once for each of the parameters, using method that doesn't
+        # check whether the parameter was declared beforehand or not.
+        self._set_parameters(parameters)
+        return self.get_parameters([parameter.name for parameter in parameters])
+
+    def undeclare_parameter(self, name: str):
+        """
+        Undeclares a parameter.
+
+        :param name: name of the parameter.
+        :raises ParameterNotDeclaredException: if parameter had not been declared before
+            and undeclared parameters are not allowed.
+        """
+        try:
+            del self._parameters[name]
+        except KeyError e:
+            raise ParameterNotDeclaredException()
+
+    def has_parameter(self, name: str) -> bool:
+        """Returns true if parameter is declared; false otherwise."""
+        return name in self._parameters
+
     def get_parameters(self, names: List[str]) -> List[Parameter]:
         """
         Get a list of parameters.
@@ -239,6 +308,18 @@ class Node:
             return Parameter(name, Parameter.Type.NOT_SET, None)
         return self._parameters[name]
 
+    def get_parameter_or(self, name: str, alternative_value: Parameter) -> Parameter:
+        """
+        Get a parameter or the alternative value if it had not been declared before.
+
+        :param name: Name of the parameter to get.
+        :alternative_value: Alternative parameter to get if it had not been declared before.
+        """
+        if has_parameter(name):
+            return self._parameters[name]
+        else:
+            return alternative_value
+
     def set_parameters(self, parameter_list: List[Parameter]) -> List[SetParametersResult]:
         """
         Set parameters for the node.
@@ -248,14 +329,29 @@ class Node:
         For each successfully set parameter, a :class:`ParameterEvent` message is
         published.
 
+        If setting a parameter fails due to not being declared, then the
+        parameters which have already been set will stay set, and no attempt will
+        be made to set the parameters which come after.
+
         :param parameter_list: The list of parameters to set.
         :return: A list of SetParametersResult messages.
         """
+        return self._set_parameters(parameter_list, self.set_parameters_atomically)
+
+    def _set_parameters(self, parameter_list: List[Parameter], setter_func=None, raise_on_failure=False) -> List[SetParametersResult]:
+        """
+        Set parameters for the node, without checking whether they were declared beforehand or not.
+        Executes the callback for each parameter in the list.
+        """
+        if setter_func is None:
+            setter_func = self._set_parameters_atomically
+
         results = []
         for param in parameter_list:
-            if not isinstance(param, Parameter):
-                raise TypeError("parameter must be instance of type '{}'".format(repr(Parameter)))
-            results.append(self.set_parameters_atomically([param]))
+            result = setter_func([param])
+            if raise_on_failure and not result.successful:
+                raise InvalidParameterValueException()
+            results.append()
         return results
 
     def set_parameters_atomically(self, parameter_list: List[Parameter]) -> SetParametersResult:
@@ -269,6 +365,15 @@ class Node:
 
         :param parameter_list: The list of parameters to set.
         """
+        # Check if parameters are already declared; raise exception if not.
+        # TODO(jubeira): add meaningful message to exception.
+        if not self._allow_undeclared_parameters and
+                not all(parameter.name in self._parameters for parameter in parameter_list):
+            raise ParameterNotDeclaredException()
+
+        return self._set_parameters_atomically(parameter_list)
+
+    def _set_parameters_atomically(self, parameter_list: List[Parameter]) -> SetParametersResult
         result = None
         if self._parameters_callback:
             result = self._parameters_callback(parameter_list)
@@ -283,6 +388,9 @@ class Node:
             else:
                 parameter_event.node = self.get_namespace() + '/' + self.get_name()
             for param in parameter_list:
+                if not isinstance(param, Parameter):
+                    raise TypeError("parameter must be instance of type '{}'".format(repr(Parameter)))
+
                 if Parameter.Type.NOT_SET == param.type_:
                     if Parameter.Type.NOT_SET != self.get_parameter(param.name).type_:
                         # Parameter deleted. (Parameter had value and new value is not set)
@@ -305,6 +413,34 @@ class Node:
             self._parameter_event_publisher.publish(parameter_event)
 
         return result
+
+    def describe_parameter(self, name: str) -> ParameterDescriptor:
+        """
+        Gets the parameter descriptor of a given parameter.
+
+        :param name: Name of the parameter to describe.
+        :return: ParameterDescriptor corresponding to the parameter,
+            or default ParameterDescriptor if parameter had not been declared before
+            and undeclared parameters are allowed.
+        :raises ParameterNotDeclaredException: if parameter had not been declared before
+            and undeclared parameters are not allowed.
+        """
+        # TODO(jubeira): Implement this method.
+        pass
+
+    def describe_parameters(self, name: List[str]) -> List[ParameterDescriptor]:
+        """
+        Gets the parameter descriptors of a given list of parameters.
+
+        :param name: List of names of the parameters to describe.
+        :return: List of ParameterDescriptors corresponding to the given parameters.
+            Default ParameterDescriptors shall be returned for parameters that
+            had not been declared before if undeclared parameters are allowed.
+        :raises ParameterNotDeclaredException: if at least one parameter
+            had not been declared before and undeclared parameters are not allowed.
+        """
+        # TODO(jubeira): Implement this method.
+        pass
 
     def set_parameters_callback(
         self,

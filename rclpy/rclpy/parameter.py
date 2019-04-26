@@ -86,6 +86,7 @@ class Parameter:
             value = param_msg.value.string_array_value
         return cls(param_msg.name, type_, value)
 
+    # TODO(jubeira): Add support for ParameterDescriptor.
     def __init__(self, name, type_, value=None):
         if not isinstance(type_, Parameter.Type):
             raise TypeError("type must be an instance of '{}'".format(repr(Parameter.Type)))
