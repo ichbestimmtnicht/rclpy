@@ -615,11 +615,10 @@ class Node:
 
         :return: ``True`` if successful, ``False`` otherwise.
         """
-        for gc in self.guards:
-            if gc.guard_handle == guard.guard_handle:
-                _rclpy.rclpy_destroy_entity(gc.guard_handle)
-                self.guards.remove(gc)
-                return True
+        if guard in self.guards:
+            self.guards.remove(guard)
+            guard.destroy()
+            return True
         return False
 
     def destroy_node(self) -> bool:
@@ -664,7 +663,7 @@ class Node:
             _rclpy.rclpy_destroy_entity(tmr.clock._clock_handle)
         while self.guards:
             gc = self.guards.pop()
-            _rclpy.rclpy_destroy_entity(gc.guard_handle)
+            gc.destroy()
 
         _rclpy.rclpy_destroy_entity(self.handle)
         self._handle = None
