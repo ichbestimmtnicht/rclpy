@@ -266,7 +266,7 @@ class Node:
 
         # Call the callback once for each of the parameters, using method that doesn't
         # check whether the parameter was declared beforehand or not.
-        self._set_parameters(parameters)
+        self._set_parameters(parameters, raise_on_failure=True)
         return self.get_parameters([parameter.name for parameter in parameters])
 
     def undeclare_parameter(self, name: str):
@@ -340,8 +340,21 @@ class Node:
 
     def _set_parameters(self, parameter_list: List[Parameter], setter_func=None, raise_on_failure=False) -> List[SetParametersResult]:
         """
-        Set parameters for the node, without checking whether they were declared beforehand or not.
-        Executes the callback for each parameter in the list.
+        Set parameters for the node, applying a setter function for each of the parameters in the list.
+        By default it doesn't check if the parameters were declared, and both declares and sets
+        the given list.
+
+        If a callback was registered previously with :func:`set_parameters_callback`, it will be
+        called prior to setting the parameters for the node. If the callback doesn't succeed
+        for a given parameter, it won't be set and either an unsuccessful result will be returned
+        for that parameter, or an exception will be raised according to `raise_on_failure` flag.
+
+        :param parameter_list: List of parameters to set.
+        :param setter_func: Method to set the parameters. Use :func:`_set_parameters_atomically` to declare
+            and set the parameters without checking if they had been declared,
+            or :func:`set_parameters_atomically` to check if they had been declared beforehand.
+        :raises InvalidParameterValueException: if the user-defined callback rejects the parameter value
+            and raise_on_failure flag is True.
         """
         if setter_func is None:
             setter_func = self._set_parameters_atomically
@@ -364,8 +377,9 @@ class Node:
         published.
 
         :param parameter_list: The list of parameters to set.
+        :raises ParameterNotDeclaredException: if undeclared paramers are not allowed, and at least
+            one parameter in the list hadn't been declared beforehand.
         """
-        # Check if parameters are already declared; raise exception if not.
         # TODO(jubeira): add meaningful message to exception.
         if not self._allow_undeclared_parameters and
                 not all(parameter.name in self._parameters for parameter in parameter_list):
@@ -373,7 +387,22 @@ class Node:
 
         return self._set_parameters_atomically(parameter_list)
 
-    def _set_parameters_atomically(self, parameter_list: List[Parameter]) -> SetParametersResult
+    def _set_parameters_atomically(self, parameter_list: List[Parameter]) -> SetParametersResult:
+        """
+        Atomically set parameters for the node.
+
+        If a callback was registered previously with :func:`set_parameters_callback`, it will be
+        called prior to setting the parameters for the node. If the callback doesn't succeed
+        for a given parameter, it won't be set and an unsuccessful result will be returned
+        for that parameter.
+        If the parameters are set successfully, a :class:`ParameterEvent` message is
+        published.
+
+        This method does not check if the parameters were declared beforehand, and is intended
+        for internal use of this class.
+
+        :param parameter_list: The list of parameters to set.
+        """
         result = None
         if self._parameters_callback:
             result = self._parameters_callback(parameter_list)
