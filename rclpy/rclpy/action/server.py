@@ -15,13 +15,15 @@
 from enum import Enum
 import functools
 import threading
+import traceback
 
 from action_msgs.msg import GoalInfo, GoalStatus
 
 from rclpy.executors import await_or_execute
 from rclpy.impl.implementation_singleton import rclpy_action_implementation as _rclpy_action
 from rclpy.qos import qos_profile_action_status_default
-from rclpy.qos import qos_profile_default, qos_profile_services_default
+from rclpy.qos import qos_profile_services_default
+from rclpy.qos import QoSProfile
 from rclpy.task import Future
 from rclpy.type_support import check_for_type_support
 from rclpy.waitable import NumberOfEntities, Waitable
@@ -203,12 +205,12 @@ class ActionServer(Waitable):
         goal_service_qos_profile=qos_profile_services_default,
         result_service_qos_profile=qos_profile_services_default,
         cancel_service_qos_profile=qos_profile_services_default,
-        feedback_pub_qos_profile=qos_profile_default,
+        feedback_pub_qos_profile=QoSProfile(depth=10),
         status_pub_qos_profile=qos_profile_action_status_default,
         result_timeout=900
     ):
         """
-        Constructor.
+        Create an ActionServer.
 
         :param node: The ROS node to add the action server to.
         :param action_type: Type of the action.
@@ -247,18 +249,19 @@ class ActionServer(Waitable):
         check_for_type_support(action_type)
         self._node = node
         self._action_type = action_type
-        self._handle = _rclpy_action.rclpy_action_create_server(
-            node.handle,
-            node.get_clock().handle,
-            action_type,
-            action_name,
-            goal_service_qos_profile.get_c_qos_profile(),
-            result_service_qos_profile.get_c_qos_profile(),
-            cancel_service_qos_profile.get_c_qos_profile(),
-            feedback_pub_qos_profile.get_c_qos_profile(),
-            status_pub_qos_profile.get_c_qos_profile(),
-            result_timeout,
-        )
+        with node.handle as node_capsule, node.get_clock().handle as clock_capsule:
+            self._handle = _rclpy_action.rclpy_action_create_server(
+                node_capsule,
+                clock_capsule,
+                action_type,
+                action_name,
+                goal_service_qos_profile.get_c_qos_profile(),
+                result_service_qos_profile.get_c_qos_profile(),
+                cancel_service_qos_profile.get_c_qos_profile(),
+                feedback_pub_qos_profile.get_c_qos_profile(),
+                status_pub_qos_profile.get_c_qos_profile(),
+                result_timeout,
+            )
 
         # key: UUID in bytes, value: GoalHandle
         self._goal_handles = {}
@@ -326,8 +329,14 @@ class ActionServer(Waitable):
         goal_uuid = goal_handle.goal_id.uuid
         self._node.get_logger().debug('Executing goal with ID {0}'.format(goal_uuid))
 
-        # Execute user callback
-        execute_result = await await_or_execute(execute_callback, goal_handle)
+        try:
+            # Execute user callback
+            execute_result = await await_or_execute(execute_callback, goal_handle)
+        except Exception as ex:
+            # Create an empty result so that we can still send a response to the client
+            execute_result = self._action_type.Result()
+            self._node.get_logger().error('Error raised in execute callback: {0}'.format(ex))
+            traceback.print_exc()
 
         # If user did not trigger a terminal state, assume aborted
         if goal_handle.is_active:
@@ -600,13 +609,14 @@ class ActionServer(Waitable):
 
     def destroy(self):
         """Destroy the underlying action server handle."""
-        if self._handle is None or self._node.handle is None:
+        if self._handle is None:
             return
 
         for goal_handle in self._goal_handles.values():
             goal_handle.destroy()
 
-        _rclpy_action.rclpy_action_destroy_entity(self._handle, self._node.handle)
+        with self._node.handle as node_capsule:
+            _rclpy_action.rclpy_action_destroy_entity(self._handle, node_capsule)
         self._node.remove_waitable(self)
         self._handle = None
 

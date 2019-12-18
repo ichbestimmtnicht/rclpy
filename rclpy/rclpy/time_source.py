@@ -20,6 +20,7 @@ from rclpy.time import Time
 import rosgraph_msgs.msg
 
 CLOCK_TOPIC = '/clock'
+USE_SIM_TIME_NAME = 'use_sim_time'
 
 
 class TimeSource:
@@ -57,7 +58,8 @@ class TimeSource:
             self._clock_sub = self._node.create_subscription(
                 rosgraph_msgs.msg.Clock,
                 CLOCK_TOPIC,
-                self.clock_callback
+                self.clock_callback,
+                10
             )
 
     def attach_node(self, node):
@@ -69,17 +71,21 @@ class TimeSource:
             self.detach_node()
         self._node = node
 
-        use_sim_time_param = node.get_parameter('use_sim_time')
+        if not node.has_parameter(USE_SIM_TIME_NAME):
+            node.declare_parameter(USE_SIM_TIME_NAME, False)
+
+        use_sim_time_param = node.get_parameter(USE_SIM_TIME_NAME)
         if use_sim_time_param.type_ != Parameter.Type.NOT_SET:
             if use_sim_time_param.type_ == Parameter.Type.BOOL:
                 self.ros_time_is_active = use_sim_time_param.value
             else:
                 node.get_logger().error(
-                    "Invalid type for parameter 'use_sim_time' {!r} should be bool"
-                    .format(use_sim_time_param.type_))
+                    "Invalid type for parameter '{}' {!r} should be bool"
+                    .format(USE_SIM_TIME_NAME, use_sim_time_param.type_))
         else:
             node.get_logger().debug(
-                "'use_sim_time' parameter not set, using wall time by default")
+                "'{}' parameter not set, using wall time by default"
+                .format(USE_SIM_TIME_NAME))
 
         node.set_parameters_callback(self._on_parameter_event)
 
@@ -109,12 +115,13 @@ class TimeSource:
 
     def _on_parameter_event(self, parameter_list):
         for parameter in parameter_list:
-            if parameter.name == 'use_sim_time':
+            if parameter.name == USE_SIM_TIME_NAME:
                 if parameter.type_ == Parameter.Type.BOOL:
                     self.ros_time_is_active = parameter.value
                 else:
                     self._node.get_logger().error(
-                        'use_sim_time parameter set to something besides a bool')
+                        '{} parameter set to something besides a bool'
+                        .format(USE_SIM_TIME_NAME))
                 break
 
         return SetParametersResult(successful=True)

@@ -23,7 +23,8 @@ from action_msgs.srv import CancelGoal
 from rclpy.executors import await_or_execute
 from rclpy.impl.implementation_singleton import rclpy_action_implementation as _rclpy_action
 from rclpy.qos import qos_profile_action_status_default
-from rclpy.qos import qos_profile_default, qos_profile_services_default
+from rclpy.qos import qos_profile_services_default
+from rclpy.qos import QoSProfile
 from rclpy.task import Future
 from rclpy.type_support import check_for_type_support
 from rclpy.waitable import NumberOfEntities, Waitable
@@ -120,11 +121,11 @@ class ActionClient(Waitable):
         goal_service_qos_profile=qos_profile_services_default,
         result_service_qos_profile=qos_profile_services_default,
         cancel_service_qos_profile=qos_profile_services_default,
-        feedback_sub_qos_profile=qos_profile_default,
+        feedback_sub_qos_profile=QoSProfile(depth=10),
         status_sub_qos_profile=qos_profile_action_status_default
     ):
         """
-        Constructor.
+        Create an ActionClient.
 
         :param node: The ROS node to add the action client to.
         :param action_type: Type of the action.
@@ -147,16 +148,18 @@ class ActionClient(Waitable):
         check_for_type_support(action_type)
         self._node = node
         self._action_type = action_type
-        self._client_handle = _rclpy_action.rclpy_action_create_client(
-            node.handle,
-            action_type,
-            action_name,
-            goal_service_qos_profile.get_c_qos_profile(),
-            result_service_qos_profile.get_c_qos_profile(),
-            cancel_service_qos_profile.get_c_qos_profile(),
-            feedback_sub_qos_profile.get_c_qos_profile(),
-            status_sub_qos_profile.get_c_qos_profile()
-        )
+        self._action_name = action_name
+        with node.handle as node_capsule:
+            self._client_handle = _rclpy_action.rclpy_action_create_client(
+                node_capsule,
+                action_type,
+                action_name,
+                goal_service_qos_profile.get_c_qos_profile(),
+                result_service_qos_profile.get_c_qos_profile(),
+                cancel_service_qos_profile.get_c_qos_profile(),
+                feedback_sub_qos_profile.get_c_qos_profile(),
+                status_sub_qos_profile.get_c_qos_profile()
+            )
 
         self._is_ready = False
 
@@ -276,27 +279,45 @@ class ActionClient(Waitable):
         """
         if 'goal' in taken_data:
             sequence_number, goal_response = taken_data['goal']
-            goal_handle = ClientGoalHandle(
-                self,
-                self._sequence_number_to_goal_id[sequence_number],
-                goal_response)
+            if sequence_number in self._sequence_number_to_goal_id:
+                goal_handle = ClientGoalHandle(
+                    self,
+                    self._sequence_number_to_goal_id[sequence_number],
+                    goal_response)
 
-            if goal_handle.accepted:
-                goal_uuid = bytes(goal_handle.goal_id.uuid)
-                if goal_uuid in self._goal_handles:
-                    raise RuntimeError(
-                        'Two goals were accepted with the same ID ({})'.format(goal_handle))
-                self._goal_handles[goal_uuid] = weakref.ref(goal_handle)
+                if goal_handle.accepted:
+                    goal_uuid = bytes(goal_handle.goal_id.uuid)
+                    if goal_uuid in self._goal_handles:
+                        raise RuntimeError(
+                            'Two goals were accepted with the same ID ({})'.format(goal_handle))
+                    self._goal_handles[goal_uuid] = weakref.ref(goal_handle)
 
-            self._pending_goal_requests[sequence_number].set_result(goal_handle)
+                self._pending_goal_requests[sequence_number].set_result(goal_handle)
+            else:
+                self._node.get_logger().warning(
+                    'Ignoring unexpected goal response. There may be more than '
+                    f"one action server for the action '{self._action_name}'"
+                )
 
         if 'cancel' in taken_data:
             sequence_number, cancel_response = taken_data['cancel']
-            self._pending_cancel_requests[sequence_number].set_result(cancel_response)
+            if sequence_number in self._pending_cancel_requests:
+                self._pending_cancel_requests[sequence_number].set_result(cancel_response)
+            else:
+                self._node.get_logger().warning(
+                    'Ignoring unexpected cancel response. There may be more than '
+                    f"one action server for the action '{self._action_name}'"
+                )
 
         if 'result' in taken_data:
             sequence_number, result_response = taken_data['result']
-            self._pending_result_requests[sequence_number].set_result(result_response)
+            if sequence_number in self._pending_result_requests:
+                self._pending_result_requests[sequence_number].set_result(result_response)
+            else:
+                self._node.get_logger().warning(
+                    'Ignoring unexpected result response. There may be more than '
+                    f"one action server for the action '{self._action_name}'"
+                )
 
         if 'feedback' in taken_data:
             feedback_msg = taken_data['feedback']
@@ -362,7 +383,7 @@ class ActionClient(Waitable):
             nonlocal event
             event.set()
 
-        send_goal_future = self.send_goal_async(goal, kwargs)
+        send_goal_future = self.send_goal_async(goal, **kwargs)
         send_goal_future.add_done_callback(unblock)
 
         event.wait()
@@ -536,8 +557,9 @@ class ActionClient(Waitable):
 
         :return: True if an action server is ready, False otherwise.
         """
-        return _rclpy_action.rclpy_action_server_is_available(
-                self._node.handle,
+        with self._node.handle as node_capsule:
+            return _rclpy_action.rclpy_action_server_is_available(
+                node_capsule,
                 self._client_handle)
 
     def wait_for_server(self, timeout_sec=None):
@@ -562,10 +584,11 @@ class ActionClient(Waitable):
 
     def destroy(self):
         """Destroy the underlying action client handle."""
-        if self._client_handle is None or self._node.handle is None:
+        if self._client_handle is None:
             return
-        _rclpy_action.rclpy_action_destroy_entity(self._client_handle, self._node.handle)
-        self._node.remove_waitable(self)
+        with self._node.handle as node_capsule:
+            _rclpy_action.rclpy_action_destroy_entity(self._client_handle, node_capsule)
+            self._node.remove_waitable(self)
         self._client_handle = None
 
     def __del__(self):

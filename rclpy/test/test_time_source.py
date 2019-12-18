@@ -37,14 +37,16 @@ class TestTimeSource(unittest.TestCase):
     def setUp(self):
         self.context = rclpy.context.Context()
         rclpy.init(context=self.context)
-        self.node = rclpy.create_node('TestTimeSource', namespace='/rclpy', context=self.context)
+        self.node = rclpy.create_node(
+            'TestTimeSource', namespace='/rclpy', context=self.context,
+            allow_undeclared_parameters=True)
 
     def tearDown(self):
         self.node.destroy_node()
         rclpy.shutdown(context=self.context)
 
     def publish_clock_messages(self):
-        clock_pub = self.node.create_publisher(rosgraph_msgs.msg.Clock, CLOCK_TOPIC)
+        clock_pub = self.node.create_publisher(rosgraph_msgs.msg.Clock, CLOCK_TOPIC, 1)
         cycle_count = 0
         time_msg = rosgraph_msgs.msg.Clock()
         while rclpy.ok(context=self.context) and cycle_count < 5:
@@ -57,7 +59,7 @@ class TestTimeSource(unittest.TestCase):
             time.sleep(1)
 
     def publish_reversed_clock_messages(self):
-        clock_pub = self.node.create_publisher(rosgraph_msgs.msg.Clock, CLOCK_TOPIC)
+        clock_pub = self.node.create_publisher(rosgraph_msgs.msg.Clock, CLOCK_TOPIC, 1)
         cycle_count = 0
         time_msg = rosgraph_msgs.msg.Clock()
         while rclpy.ok(context=self.context) and cycle_count < 5:

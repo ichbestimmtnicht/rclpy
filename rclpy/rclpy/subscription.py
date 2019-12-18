@@ -16,7 +16,10 @@ from typing import Callable
 from typing import TypeVar
 
 from rclpy.callback_groups import CallbackGroup
+from rclpy.handle import Handle
 from rclpy.qos import QoSProfile
+from rclpy.qos_event import SubscriptionEventCallbacks
+
 
 # For documentation only
 MsgType = TypeVar('MsgType')
@@ -26,14 +29,14 @@ class Subscription:
 
     def __init__(
          self,
-         subscription_handle,
+         subscription_handle: Handle,
          msg_type: MsgType,
          topic: str,
          callback: Callable,
          callback_group: CallbackGroup,
          qos_profile: QoSProfile,
-         node_handle,
-         raw: bool
+         raw: bool,
+         event_callbacks: SubscriptionEventCallbacks,
     ) -> None:
         """
         Create a container for a ROS subscription.
@@ -50,12 +53,9 @@ class Subscription:
         :param callback_group: The callback group for the subscription. If ``None``, then the
             nodes default callback group is used.
         :param qos_profile: The quality of service profile to apply to the subscription.
-        :node_handle: Capsule pointing to the underlying ``rcl_node_t`` object for the node the
-            subscription is associated with.
         :param raw: If ``True``, then received messages will be stored in raw binary
             representation.
         """
-        self.node_handle = node_handle
         self.__handle = subscription_handle
         self.msg_type = msg_type
         self.topic = topic
@@ -65,6 +65,9 @@ class Subscription:
         self._executor_event = False
         self.qos_profile = qos_profile
         self.raw = raw
+
+        self.event_handlers = event_callbacks.create_event_handlers(
+            callback_group, subscription_handle)
 
     @property
     def handle(self):

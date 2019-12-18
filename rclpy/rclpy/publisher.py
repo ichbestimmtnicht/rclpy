@@ -14,8 +14,11 @@
 
 from typing import TypeVar
 
+from rclpy.callback_groups import CallbackGroup
+from rclpy.handle import Handle
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.qos import QoSProfile
+from rclpy.qos_event import PublisherEventCallbacks
 
 MsgType = TypeVar('MsgType')
 
@@ -24,11 +27,12 @@ class Publisher:
 
     def __init__(
         self,
-        publisher_handle,
+        publisher_handle: Handle,
         msg_type: MsgType,
         topic: str,
         qos_profile: QoSProfile,
-        node_handle
+        event_callbacks: PublisherEventCallbacks,
+        callback_group: CallbackGroup,
     ) -> None:
         """
         Create a container for a ROS publisher.
@@ -43,14 +47,14 @@ class Publisher:
         :param msg_type: The type of ROS messages the publisher will publish.
         :param topic: The name of the topic the publisher will publish to.
         :param qos_profile: The quality of service profile to apply to the publisher.
-        :param node_handle: Capsule pointing to the ``rcl_node_t`` object for the node the
-            publisher is associated with.
         """
-        self.publisher_handle = publisher_handle
+        self.__handle = publisher_handle
         self.msg_type = msg_type
         self.topic = topic
         self.qos_profile = qos_profile
-        self.node_handle = node_handle
+
+        self.event_handlers = event_callbacks.create_event_handlers(
+            callback_group, publisher_handle)
 
     def publish(self, msg: MsgType) -> None:
         """
@@ -62,4 +66,27 @@ class Publisher:
         """
         if not isinstance(msg, self.msg_type):
             raise TypeError()
-        _rclpy.rclpy_publish(self.publisher_handle, msg)
+        with self.handle as capsule:
+            _rclpy.rclpy_publish(capsule, msg)
+
+    def get_subscription_count(self) -> int:
+        """Get the amount of subscribers that this publisher has."""
+        with self.handle as capsule:
+            return _rclpy.rclpy_publisher_get_subscription_count(capsule)
+
+    @property
+    def handle(self):
+        return self.__handle
+
+    def destroy(self):
+        self.handle.destroy()
+
+    def assert_liveliness(self) -> None:
+        """
+        Manually assert that this Publisher is alive.
+
+        If the QoS Liveliness policy is set to RMW_QOS_POLICY_LIVELINESS_MANUAL_BY_TOPIC, the
+        application must call this at least as often as ``QoSProfile.liveliness_lease_duration``.
+        """
+        with self.handle as capsule:
+            _rclpy.rclpy_assert_liveliness(capsule)

@@ -40,9 +40,12 @@ class MockActionClient():
         self.result_srv = node.create_client(
             Fibonacci.Impl.GetResultService, '/fibonacci/_action/get_result')
         self.feedback_sub = node.create_subscription(
-            Fibonacci.Impl.FeedbackMessage, '/fibonacci/_action/feedback', self.feedback_callback)
+            Fibonacci.Impl.FeedbackMessage,
+            '/fibonacci/_action/feedback',
+            self.feedback_callback,
+            1)
         self.status_sub = node.create_subscription(
-            Fibonacci.Impl.GoalStatusMessage, '/fibonacci/_action/status', self.status_callback)
+            Fibonacci.Impl.GoalStatusMessage, '/fibonacci/_action/status', self.status_callback, 1)
 
     def reset(self):
         self.feedback_msg = None
@@ -109,11 +112,11 @@ class TestActionServer(unittest.TestCase):
             goal_callback=lambda req: GoalResponse.REJECT,
             handle_accepted_callback=lambda gh: None,
             cancel_callback=lambda req: CancelResponse.REJECT,
-            goal_service_qos_profile=rclpy.qos.qos_profile_default,
-            result_service_qos_profile=rclpy.qos.qos_profile_default,
-            cancel_service_qos_profile=rclpy.qos.qos_profile_default,
-            feedback_pub_qos_profile=rclpy.qos.qos_profile_default,
-            status_pub_qos_profile=rclpy.qos.qos_profile_default,
+            goal_service_qos_profile=rclpy.qos.QoSProfile(depth=10),
+            result_service_qos_profile=rclpy.qos.QoSProfile(depth=10),
+            cancel_service_qos_profile=rclpy.qos.QoSProfile(depth=10),
+            feedback_pub_qos_profile=rclpy.qos.QoSProfile(depth=10),
+            status_pub_qos_profile=rclpy.qos.QoSProfile(depth=10),
             result_timeout=300,
         )
         action_server.destroy()
@@ -515,6 +518,35 @@ class TestActionServer(unittest.TestCase):
         # Goal status should default to STATUS_ABORTED
         self.assertEqual(result_response.status, GoalStatus.STATUS_ABORTED)
         self.assertEqual(result_response.result.sequence.tolist(), [1, 1, 2, 3, 5])
+        action_server.destroy()
+
+    def test_execute_raises_exception(self):
+
+        def execute_callback(goal_handle):
+            # User callback raises
+            raise RuntimeError('test user callback raises')
+
+        action_server = ActionServer(
+            self.node,
+            Fibonacci,
+            'fibonacci',
+            execute_callback=execute_callback,
+        )
+
+        goal_uuid = UUID(uuid=list(uuid.uuid4().bytes))
+        goal_msg = Fibonacci.Impl.SendGoalService.Request()
+        goal_msg.goal_id = goal_uuid
+        goal_future = self.mock_action_client.send_goal(goal_msg)
+        rclpy.spin_until_future_complete(self.node, goal_future, self.executor)
+        goal_handle = goal_future.result()
+        self.assertTrue(goal_handle.accepted)
+
+        get_result_future = self.mock_action_client.get_result(goal_uuid)
+        rclpy.spin_until_future_complete(self.node, get_result_future, self.executor)
+        result_response = get_result_future.result()
+        # Goal status should default to STATUS_ABORTED
+        self.assertEqual(result_response.status, GoalStatus.STATUS_ABORTED)
+        self.assertEqual(result_response.result.sequence.tolist(), [])
         action_server.destroy()
 
     def test_expire_goals_none(self):

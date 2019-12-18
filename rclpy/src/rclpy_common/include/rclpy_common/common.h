@@ -17,6 +17,7 @@
 #include <Python.h>
 
 #include <rcl/graph.h>  // rcl_names_and_types_t
+#include <rcl/rcl.h>
 #include <rmw/types.h>
 
 #include "rclpy_common/visibility_control.h"
@@ -26,6 +27,38 @@ typedef void destroy_ros_message_signature (void *);
 typedef bool convert_from_py_signature (PyObject *, void *);
 typedef PyObject * convert_to_py_signature (void *);
 
+typedef struct
+{
+  // Important: a pointer to a structure is also a pointer to its first member.
+  // The subscription must be first in the struct to compare sub.handle.pointer to an address
+  // in a wait set.
+  rcl_subscription_t subscription;
+  rcl_node_t * node;
+} rclpy_subscription_t;
+
+typedef struct
+{
+  rcl_publisher_t publisher;
+  rcl_node_t * node;
+} rclpy_publisher_t;
+
+typedef struct
+{
+  // Important: a pointer to a structure is also a pointer to its first member.
+  // The client must be first in the struct to compare cli.handle.pointer to an address
+  // in a wait set.
+  rcl_client_t client;
+  rcl_node_t * node;
+} rclpy_client_t;
+
+typedef struct
+{
+  // Important: a pointer to a structure is also a pointer to its first member.
+  // The service must be first in the struct to compare srv.handle.pointer to an address
+  // in a wait set.
+  rcl_service_t service;
+  rcl_node_t * node;
+} rclpy_service_t;
 
 /// Finalize names and types struct with error setting.
 /**
@@ -48,14 +81,14 @@ RCLPY_COMMON_PUBLIC
 PyObject *
 rclpy_convert_to_py_names_and_types(rcl_names_and_types_t * topic_names_and_types);
 
-/// Convert a C rmw_qos_profile_t into a Python QoSProfile object.
+/// Convert a C rmw_qos_profile_t into a Python dictionary with qos profile args.
 /**
  * \param[in] profile Pointer to a rmw_qos_profile_t to convert
- * \return QoSProfile object
+ * \return Python dictionary
  */
 RCLPY_COMMON_PUBLIC
 PyObject *
-rclpy_common_convert_to_py_qos_policy(const rmw_qos_profile_t * profile);
+rclpy_common_convert_to_qos_dict(const rmw_qos_profile_t * profile);
 
 RCLPY_COMMON_PUBLIC
 void *

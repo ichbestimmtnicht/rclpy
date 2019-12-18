@@ -48,15 +48,15 @@ from rclpy.context import Context
 from rclpy.parameter import Parameter
 from rclpy.task import Future
 from rclpy.utilities import get_default_context
-from rclpy.utilities import get_rmw_implementation_identifier  # noqa
-from rclpy.utilities import ok  # noqa: forwarding to this module
+from rclpy.utilities import get_rmw_implementation_identifier  # noqa: F401
+from rclpy.utilities import ok  # noqa: F401 forwarding to this module
 from rclpy.utilities import shutdown as _shutdown
-from rclpy.utilities import try_shutdown  # noqa
+from rclpy.utilities import try_shutdown  # noqa: F401
 
 # Avoid loading extensions on module import
 if TYPE_CHECKING:
-    from rclpy.executors import Executor
-    from rclpy.node import Node
+    from rclpy.executors import Executor  # noqa: F401
+    from rclpy.node import Node  # noqa: F401
 
 
 def init(*, args: List[str] = None, context: Context = None) -> None:
@@ -110,8 +110,11 @@ def create_node(
     cli_args: List[str] = None,
     namespace: str = None,
     use_global_arguments: bool = True,
+    enable_rosout: bool = True,
     start_parameter_services: bool = True,
-    initial_parameters: List[Parameter] = None
+    parameter_overrides: List[Parameter] = None,
+    allow_undeclared_parameters: bool = False,
+    automatically_declare_parameters_from_overrides: bool = False
 ) -> 'Node':
     """
     Create an instance of :class:`.Node`.
@@ -119,22 +122,34 @@ def create_node(
     :param node_name: A name to give to the node.
     :param context: The context to associated with the node, or ``None`` for the default global
         context.
-    :param cli_args: Command line arguments to be used by the node.
+    :param cli_args: Command line arguments to be used by the node. Being specific to a ROS node,
+        an implicit `--ros-args` scope flag always precedes these arguments.
     :param namespace: The namespace prefix to apply to entities associated with the node
         (node name, topics, etc).
     :param use_global_arguments: ``False`` if the node should ignore process-wide command line
         arguments.
+    :param enable_rosout: ``False`` if the node should ignore rosout logging.
     :param start_parameter_services: ``False`` if the node should not create parameter services.
-    :param initial_parameters: A list of :class:`.Parameter` to be set during node creation.
+    :param parameter_overrides: A list of :class:`.Parameter` which are used to override the
+        initial values of parameters declared on this node.
+     :param allow_undeclared_parameters: if True undeclared parameters are allowed, default False.
+        This option doesn't affect `parameter_overrides`.
+    :param automatically_declare_parameters_from_overrides: If True, the "parameter overrides" will
+        be used to implicitly declare parameters on the node during creation, default False.
     :return: An instance of the newly created node.
     """
     # imported locally to avoid loading extensions on module import
-    from rclpy.node import Node
+    from rclpy.node import Node  # noqa: F811
     return Node(
         node_name, context=context, cli_args=cli_args, namespace=namespace,
         use_global_arguments=use_global_arguments,
+        enable_rosout=enable_rosout,
         start_parameter_services=start_parameter_services,
-        initial_parameters=initial_parameters)
+        parameter_overrides=parameter_overrides,
+        allow_undeclared_parameters=allow_undeclared_parameters,
+        automatically_declare_parameters_from_overrides=(
+            automatically_declare_parameters_from_overrides
+        ))
 
 
 def spin_once(node: 'Node', *, executor: 'Executor' = None, timeout_sec: float = None) -> None:

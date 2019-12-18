@@ -20,6 +20,7 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor
+from rclpy.qos import qos_profile_action_status_default
 
 from test_msgs.action import Fibonacci
 
@@ -43,7 +44,11 @@ class MockActionServer():
             Fibonacci.Impl.GetResultService, '/fibonacci/_action/get_result',
             self.result_callback)
         self.feedback_pub = node.create_publisher(
-            Fibonacci.Impl.FeedbackMessage, '/fibonacci/_action/feedback')
+            Fibonacci.Impl.FeedbackMessage, '/fibonacci/_action/feedback', 1)
+        self.status_pub = node.create_publisher(
+            Fibonacci.Impl.GoalStatusMessage,
+            '/fibonacci/_action/status',
+            qos_profile_action_status_default)
 
     def goal_callback(self, request, response):
         response.accepted = True
@@ -98,11 +103,11 @@ class TestActionClient(unittest.TestCase):
             self.node,
             Fibonacci,
             'fibonacci',
-            goal_service_qos_profile=rclpy.qos.qos_profile_default,
-            result_service_qos_profile=rclpy.qos.qos_profile_default,
-            cancel_service_qos_profile=rclpy.qos.qos_profile_default,
-            feedback_sub_qos_profile=rclpy.qos.qos_profile_default,
-            status_sub_qos_profile=rclpy.qos.qos_profile_default
+            goal_service_qos_profile=rclpy.qos.QoSProfile(depth=10),
+            result_service_qos_profile=rclpy.qos.QoSProfile(depth=10),
+            cancel_service_qos_profile=rclpy.qos.QoSProfile(depth=10),
+            feedback_sub_qos_profile=rclpy.qos.QoSProfile(depth=10),
+            status_sub_qos_profile=rclpy.qos.QoSProfile(depth=10)
         )
         ac.destroy()
 
